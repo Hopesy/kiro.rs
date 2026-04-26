@@ -1,0 +1,135 @@
+name: Release Windows Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version label for release assets (e.g., v2026.3.3)'
+        required: true
+        default: 'v2026.3.3'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${{ github.ref_name }}"
+          fi
+
+          if [[ "$VERSION" != v* ]]; then
+            VERSION="v${VERSION}"
+          fi
+
+          PACKAGE_BASENAME="kiro-rs-${VERSION}-windows-x64"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "package_basename=$PACKAGE_BASENAME" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install admin-ui dependencies
+        working-directory: admin-ui
+        run: pnpm install
+
+      - name: Build admin-ui
+        working-directory: admin-ui
+        run: pnpm build
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-cache-windows-release
+          cache-on-failure: true
+
+      - name: Build app
+        shell: powershell
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Prepare package
+        id: package
+        shell: powershell
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $baseName = "${{ steps.version.outputs.package_basename }}"
+          $packageDir = Join-Path $PWD $baseName
+          $bundleExe = "${baseName}.exe"
+          $zipPath = Join-Path $PWD "${baseName}.zip"
+
+          if (Test-Path $packageDir) { Remove-Item -Recurse -Force $packageDir }
+          New-Item -ItemType Directory -Path $packageDir | Out-Null
+
+          Copy-Item "target/x86_64-pc-windows-msvc/release/kiro-rs.exe" (Join-Path $packageDir "kiro-rs.exe")
+          Copy-Item "target/x86_64-pc-windows-msvc/release/kiro-rs.exe" (Join-Path $PWD $bundleExe)
+          Copy-Item "README.md" (Join-Path $packageDir "README.md")
+          Copy-Item "config.example.json" (Join-Path $packageDir "config.example.json")
+          Copy-Item "credentials.example.social.json" (Join-Path $packageDir "credentials.example.social.json")
+          Copy-Item "credentials.example.idc.json" (Join-Path $packageDir "credentials.example.idc.json")
+          Copy-Item "credentials.example.apikey.json" (Join-Path $packageDir "credentials.example.apikey.json")
+          Copy-Item "credentials.example.multiple.json" (Join-Path $packageDir "credentials.example.multiple.json")
+
+          @"
+          kiro-rs Windows package
+          =======================
+
+          Version: $version
+          Platform: windows-x64
+
+          Quick start:
+          1. Copy config.example.json to config.json and fill in apiKey / region
+          2. Prepare credentials.json based on one of the credentials.example.*.json files
+          3. Run: .\\kiro-rs.exe
+          "@ | Set-Content -Encoding UTF8 (Join-Path $packageDir "START-HERE.txt")
+
+          if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+          Compress-Archive -Path (Join-Path $packageDir '*') -DestinationPath $zipPath -Force
+
+          echo "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
+          echo "exe_path=$(Join-Path $PWD $bundleExe)" >> $env:GITHUB_OUTPUT
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.package_basename }}
+          if-no-files-found: error
+          compression-level: 0
+          path: |
+            ${{ steps.package.outputs.zip_path }}
+            ${{ steps.package.outputs.exe_path }}
+
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            ${{ steps.package.outputs.zip_path }}
+            ${{ steps.package.outputs.exe_path }}
