@@ -5,9 +5,11 @@ mod common;
 mod http_client;
 mod kiro;
 mod model;
+mod storage;
 pub mod token;
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use clap::Parser;
@@ -31,26 +33,49 @@ async fn main() {
         )
         .init();
 
-    // 加载配置
-    let config_path = args
+    // 计算原始配置路径
+    let mut config_path = args
         .config
         .unwrap_or_else(|| Config::default_config_path().to_string());
+
+    // 计算原始凭据路径
+    let mut credentials_path = args
+        .credentials
+        .unwrap_or_else(|| KiroCredentials::default_credentials_path().to_string());
+    let mut force_multiple_format = false;
+
+    // 初始化可选的 git 外部存储（若启用则重定向 config/credentials 路径）
+    if let Some(resolved) =
+        storage::initialize_from_env(Path::new(&config_path), Path::new(&credentials_path))
+            .unwrap_or_else(|e| {
+                tracing::error!("初始化 git 外部存储失败: {}", e);
+                std::process::exit(1);
+            })
+    {
+        config_path = resolved.config_path.to_string_lossy().to_string();
+        credentials_path = resolved.credentials_path.to_string_lossy().to_string();
+        force_multiple_format = resolved.force_multiple_credentials;
+        tracing::info!(
+            "已启用 git 外部存储: config={}, credentials={}",
+            config_path,
+            credentials_path
+        );
+    }
+
+    // 加载配置
     let config = Config::load(&config_path).unwrap_or_else(|e| {
         tracing::error!("加载配置失败: {}", e);
         std::process::exit(1);
     });
 
     // 加载凭证（支持单对象或数组格式）
-    let credentials_path = args
-        .credentials
-        .unwrap_or_else(|| KiroCredentials::default_credentials_path().to_string());
     let credentials_config = CredentialsConfig::load(&credentials_path).unwrap_or_else(|e| {
         tracing::error!("加载凭证失败: {}", e);
         std::process::exit(1);
     });
 
     // 判断是否为多凭据格式（用于刷新后回写）
-    let is_multiple_format = credentials_config.is_multiple();
+    let is_multiple_format = force_multiple_format || credentials_config.is_multiple();
 
     // 转换为按优先级排序的凭据列表
     let mut credentials_list = credentials_config.into_sorted_credentials();
@@ -111,10 +136,7 @@ async fn main() {
 
     // 校验所有凭据声明的端点都已注册
     for cred in &credentials_list {
-        let name = cred
-            .endpoint
-            .as_deref()
-            .unwrap_or(&config.default_endpoint);
+        let name = cred.endpoint.as_deref().unwrap_or(&config.default_endpoint);
         if !endpoints.contains_key(name) {
             tracing::error!(
                 "凭据 id={:?} 指定了未知端点 \"{}\"（已注册: {:?}）",

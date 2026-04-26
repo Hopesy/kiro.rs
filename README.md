@@ -370,6 +370,51 @@ docker-compose up
 RUST_LOG=debug ./target/release/kiro-rs
 ```
 
+### Git 外部存储（适合 Render Free）
+
+当设置 `GIT_STORAGE_REPO_URL` 后，服务会启用 **git 外部存储**：
+
+- 启动时先 clone / pull 指定仓库或分支
+- `config.json` 改为从 git worktree 中读取，并在管理面板修改后自动 commit + push
+- `credentials.json` 改为运行时聚合文件；真正持久化到 git 的是 **一个凭据一个文件**
+- Token 刷新写回时，会把最新 RT 同步到 git 仓库，再 push 到远端
+
+> 适用场景：Render Free 无持久盘，但你仍希望保存最新 RT 和管理面板里的启动配置。
+
+#### 必要环境变量
+
+| 变量 | 必填 | 默认值 | 说明 |
+|------|------|--------|------|
+| `GIT_STORAGE_REPO_URL` | 是 | - | 用于保存状态的 git 仓库 URL |
+| `GIT_STORAGE_BRANCH` | 否 | `render-state` | 持久化分支，建议与部署分支分开 |
+| `GIT_STORAGE_LOCAL_DIR` | 否 | `.git-storage` | 容器内临时 clone 目录 |
+| `GIT_STORAGE_CONFIG_PATH` | 否 | `state/config.json` | git 仓库内配置文件路径 |
+| `GIT_STORAGE_CREDENTIALS_DIR` | 否 | `state/credentials` | git 仓库内凭据目录；每个凭据一份 JSON |
+| `GIT_STORAGE_AUTHOR_NAME` | 否 | `kiro-rs` | 自动提交的 git author name |
+| `GIT_STORAGE_AUTHOR_EMAIL` | 否 | `kiro-rs@localhost` | 自动提交的 git author email |
+
+#### Render Free 推荐做法
+
+1. 启动脚本先在本地生成一个最小 `config.json` 和初始 `credentials.json`
+2. 配置上面的 `GIT_STORAGE_*` 环境变量
+3. 第一次启动时，服务会把本地配置导入 git 仓库
+4. 之后以 git 仓库里的配置 / RT 为准；刷新出来的新 RT 会自动写回远端
+
+#### 凭据目录格式
+
+启用 git 外部存储后，仓库里会出现类似：
+
+```text
+state/
+├── config.json
+└── credentials/
+    ├── credential-000001.json
+    ├── credential-000002.json
+    └── ...
+```
+
+其中每个 `credential-*.json` 都是单个凭据对象；运行时用的聚合 `credentials.json` 只是本地临时文件，不要求持久保存。
+
 ## API 端点
 
 ### 标准端点 (/v1)
