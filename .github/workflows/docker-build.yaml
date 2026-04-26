@@ -27,34 +27,22 @@ jobs:
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
         with:
           fetch-depth: 0
+
       - name: Check if commit has release tag
         id: check
+        shell: bash
         run: |
           if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == refs/heads/* ]] && git tag --points-at HEAD | grep -q '^v'; then
-            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Skipping beta build: commit already has a release tag"
           else
-            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
           fi
 
   build:
     needs: pre-check
     if: needs.pre-check.outputs.should_build == 'true'
-    runs-on: ${{ matrix.runner }}
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      is_beta: ${{ steps.version.outputs.is_beta }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux/amd64
-            runner: ubuntu-latest
-            arch: amd64
-          - platform: linux/arm64
-            runner: ubuntu-22.04-arm
-            arch: arm64
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -62,18 +50,34 @@ jobs:
 
       - name: Determine version
         id: version
+        shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-            echo "is_beta=false" >> $GITHUB_OUTPUT
+            VERSION="${{ github.event.inputs.version }}"
+            IS_BETA="false"
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-            echo "is_beta=false" >> $GITHUB_OUTPUT
+            VERSION="${{ github.ref_name }}"
+            IS_BETA="false"
           else
-            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-6)
-            echo "version=beta-${SHORT_SHA}" >> $GITHUB_OUTPUT
-            echo "is_beta=true" >> $GITHUB_OUTPUT
+            SHORT_SHA="$(echo "${{ github.sha }}" | cut -c1-6)"
+            VERSION="beta-${SHORT_SHA}"
+            IS_BETA="true"
           fi
+
+          OWNER_LOWER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          IMAGE="ghcr.io/${OWNER_LOWER}/kiro-rs"
+          ALIAS_TAG="latest"
+          if [ "$IS_BETA" = "true" ]; then
+            ALIAS_TAG="beta"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "is_beta=$IS_BETA" >> "$GITHUB_OUTPUT"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "alias_tag=$ALIAS_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -85,50 +89,18 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ github.token }}
 
-      - name: Build and push
+      - name: Build and push multi-arch image
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: ${{ matrix.platform }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
           push: true
           provenance: false
-          tags: ghcr.io/${{ github.repository_owner }}/kiro-rs:${{ steps.version.outputs.version }}-${{ matrix.arch }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: |
+            ${{ steps.version.outputs.image }}:${{ steps.version.outputs.version }}
+            ${{ steps.version.outputs.image }}:${{ steps.version.outputs.alias_tag }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=Kiro.rs Docker Image
-
-  manifest:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ github.token }}
-
-      - name: Create and push multi-arch manifest
-        run: |
-          VERSION="${{ needs.build.outputs.version }}"
-          IS_BETA="${{ needs.build.outputs.is_beta }}"
-          IMAGE="ghcr.io/${{ github.repository_owner }}/kiro-rs"
-
-          # Create manifest for version tag
-          docker manifest create ${IMAGE}:${VERSION} \
-            ${IMAGE}:${VERSION}-amd64 \
-            ${IMAGE}:${VERSION}-arm64
-          docker manifest push ${IMAGE}:${VERSION}
-
-          # Create manifest for latest/beta alias tag
-          if [ "${IS_BETA}" = "true" ]; then
-            ALIAS_TAG="beta"
-          else
-            ALIAS_TAG="latest"
-          fi
-          docker manifest create ${IMAGE}:${ALIAS_TAG} \
-            ${IMAGE}:${VERSION}-amd64 \
-            ${IMAGE}:${VERSION}-arm64
-          docker manifest push ${IMAGE}:${ALIAS_TAG}
