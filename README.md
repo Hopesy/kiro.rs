@@ -459,7 +459,7 @@ GIT_STORAGE_AUTH_TOKEN=<github-pat>
 - Existing Image: `ghcr.io/hopesy/kiro-rs:v2026.3.4`
 - Free plan
 - Git 外部存储默认内部参数：
-  - 分支：`render-state`
+  - 分支：`main`
   - 工作目录：`.git-storage`（容器内会用你配置的 cwd 解析）
   - 配置路径：`config/config.json`
   - 账号目录：`auths`

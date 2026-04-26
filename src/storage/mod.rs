@@ -67,7 +67,7 @@ impl GitStorageConfig {
                 Err(env::VarError::NotPresent) => None,
                 Err(e) => return Err(e).context("读取 GIT_STORAGE_AUTH_TOKEN 失败"),
             },
-            branch: env::var("GIT_STORAGE_BRANCH").unwrap_or_else(|_| "render-state".to_string()),
+            branch: env::var("GIT_STORAGE_BRANCH").unwrap_or_else(|_| "main".to_string()),
             local_dir,
             config_path,
             credentials_dir,
