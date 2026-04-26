@@ -432,6 +432,37 @@ auths/
 
 > 这套模式**不改变原项目核心逻辑**：运行时仍然使用 `config.json` 和聚合 `credentials.json`，只是增加了 git 数据仓库作为持久化后端。
 
+### 本地便携版默认数据目录
+
+当**未显式传入** `-c / --credentials`，且**未启用** `GIT_STORAGE_REPO_URL` 时，程序会自动切到本地数据目录模式。
+
+Windows 默认数据目录：
+
+```text
+%LocalAppData%\kiro-rs\
+├── config\
+│   └── config.json
+├── auths\
+│   ├── credential-000001.json
+│   ├── credential-000002.json
+│   └── ...
+└── runtime\
+    └── credentials.json
+```
+
+其中：
+
+- `config/config.json`：本地持久化配置源
+- `auths/*.json`：本地单账号持久化源
+- `runtime/credentials.json`：运行时聚合文件，会由 `auths/*.json` 自动生成
+
+运行中的以下变更都会同步回本地数据目录：
+
+- RT 自动刷新
+- 用户上传单账号 RT
+- 用户删除单账号 RT
+- 配置修改
+
 ### Render Blueprint（减少手工填写）
 
 仓库根目录已提供 `render.yaml`，可直接用 Render Blueprint 创建服务。当前 blueprint 不再要求手工注入单个 RT；首次只需要手填以下敏感值：

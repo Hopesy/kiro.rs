@@ -9,8 +9,9 @@ use anyhow::{Context, bail};
 use parking_lot::Mutex;
 
 use crate::kiro::model::credentials::{CredentialsConfig, KiroCredentials};
+use crate::model::config::Config;
 
-static GIT_STORAGE: OnceLock<Arc<GitStorage>> = OnceLock::new();
+static STORAGE_BACKEND: OnceLock<StorageBackend> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct ResolvedPaths {
@@ -27,6 +28,34 @@ struct GitStorageConfig {
     local_dir: PathBuf,
     config_path: PathBuf,
     credentials_dir: PathBuf,
+}
+
+enum StorageBackend {
+    Git(Arc<GitStorage>),
+    Local(Arc<LocalStorage>),
+}
+
+impl StorageBackend {
+    fn resolved_paths(&self) -> ResolvedPaths {
+        match self {
+            StorageBackend::Git(storage) => storage.resolved_paths(),
+            StorageBackend::Local(storage) => storage.resolved_paths(),
+        }
+    }
+
+    fn on_config_saved(&self, path: &Path) -> anyhow::Result<()> {
+        match self {
+            StorageBackend::Git(storage) => storage.on_config_saved(path),
+            StorageBackend::Local(storage) => storage.on_config_saved(path),
+        }
+    }
+
+    fn on_credentials_saved(&self, path: &Path) -> anyhow::Result<()> {
+        match self {
+            StorageBackend::Git(storage) => storage.on_credentials_saved(path),
+            StorageBackend::Local(storage) => storage.on_credentials_saved(path),
+        }
+    }
 }
 
 impl GitStorageConfig {
@@ -83,6 +112,146 @@ struct GitStorage {
     repo_config_path: PathBuf,
     repo_credentials_dir: PathBuf,
     lock: Mutex<()>,
+}
+
+#[derive(Debug)]
+struct LocalStorage {
+    runtime_credentials_path: PathBuf,
+    config_path: PathBuf,
+    credentials_dir: PathBuf,
+}
+
+impl LocalStorage {
+    fn new(
+        _requested_config_path: &Path,
+        _requested_credentials_path: &Path,
+    ) -> anyhow::Result<Self> {
+        let data_root = default_local_data_root()?;
+        Ok(Self {
+            runtime_credentials_path: data_root.join("runtime").join("credentials.json"),
+            config_path: data_root.join("config").join("config.json"),
+            credentials_dir: data_root.join("auths"),
+        })
+    }
+
+    fn resolved_paths(&self) -> ResolvedPaths {
+        ResolvedPaths {
+            config_path: self.config_path.clone(),
+            credentials_path: self.runtime_credentials_path.clone(),
+            force_multiple_credentials: true,
+        }
+    }
+
+    fn initialize(
+        &self,
+        requested_config_path: &Path,
+        requested_credentials_path: &Path,
+    ) -> anyhow::Result<()> {
+        fs::create_dir_all(self.config_path.parent().expect("config parent exists"))
+            .with_context(|| format!("创建本地配置目录失败: {}", self.config_path.display()))?;
+        fs::create_dir_all(&self.credentials_dir)
+            .with_context(|| format!("创建本地账号目录失败: {}", self.credentials_dir.display()))?;
+        fs::create_dir_all(
+            self.runtime_credentials_path
+                .parent()
+                .expect("runtime parent exists"),
+        )
+        .with_context(|| {
+            format!(
+                "创建本地运行时目录失败: {}",
+                self.runtime_credentials_path.display()
+            )
+        })?;
+
+        if !self.config_path.exists() {
+            if requested_config_path.exists() {
+                fs::copy(requested_config_path, &self.config_path).with_context(|| {
+                    format!(
+                        "导入本地配置失败: {} -> {}",
+                        requested_config_path.display(),
+                        self.config_path.display()
+                    )
+                })?;
+            } else {
+                let default_config = Config::default();
+                let content =
+                    serde_json::to_string_pretty(&default_config).context("序列化默认配置失败")?;
+                fs::write(&self.config_path, content)
+                    .with_context(|| format!("写入默认配置失败: {}", self.config_path.display()))?;
+            }
+        }
+
+        if !self.has_local_credentials()? && requested_credentials_path.exists() {
+            self.import_credentials_file_to_dir(requested_credentials_path)?;
+        }
+
+        self.materialize_runtime_credentials()?;
+        Ok(())
+    }
+
+    fn has_local_credentials(&self) -> anyhow::Result<bool> {
+        if !self.credentials_dir.exists() {
+            return Ok(false);
+        }
+
+        for entry in fs::read_dir(&self.credentials_dir)
+            .with_context(|| format!("读取本地账号目录失败: {}", self.credentials_dir.display()))?
+        {
+            let entry = entry?;
+            if entry.file_type()?.is_file() && entry.path().extension() == Some(OsStr::new("json"))
+            {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn load_local_credentials(&self) -> anyhow::Result<Vec<KiroCredentials>> {
+        load_credentials_from_dir(&self.credentials_dir)
+    }
+
+    fn materialize_runtime_credentials(&self) -> anyhow::Result<()> {
+        let credentials = self.load_local_credentials()?;
+        let json =
+            serde_json::to_string_pretty(&credentials).context("序列化本地运行时凭据失败")?;
+        fs::write(&self.runtime_credentials_path, json).with_context(|| {
+            format!(
+                "写入本地运行时凭据失败: {}",
+                self.runtime_credentials_path.display()
+            )
+        })?;
+        Ok(())
+    }
+
+    fn import_credentials_file_to_dir(&self, path: &Path) -> anyhow::Result<()> {
+        let config = CredentialsConfig::load(path)
+            .with_context(|| format!("读取本地凭据失败: {}", path.display()))?;
+        let credentials = config.into_sorted_credentials();
+        write_credentials_to_dir(&self.credentials_dir, &credentials)
+    }
+
+    fn on_config_saved(&self, path: &Path) -> anyhow::Result<()> {
+        if !same_path(path, &self.config_path)? {
+            return Ok(());
+        }
+
+        tracing::debug!("本地配置已持久化到数据目录: {}", self.config_path.display());
+        Ok(())
+    }
+
+    fn on_credentials_saved(&self, path: &Path) -> anyhow::Result<()> {
+        if !same_path(path, &self.runtime_credentials_path)? {
+            return Ok(());
+        }
+
+        self.import_credentials_file_to_dir(path)?;
+        tracing::debug!(
+            "本地账号已同步到数据目录: {}",
+            self.credentials_dir.display()
+        );
+        Ok(())
+    }
 }
 
 impl GitStorage {
@@ -266,56 +435,11 @@ impl GitStorage {
     }
 
     fn has_repo_credentials(&self) -> anyhow::Result<bool> {
-        if !self.repo_credentials_dir.exists() {
-            return Ok(false);
-        }
-
-        for entry in fs::read_dir(&self.repo_credentials_dir)
-            .with_context(|| format!("读取凭据目录失败: {}", self.repo_credentials_dir.display()))?
-        {
-            let entry = entry?;
-            if entry.file_type()?.is_file() && entry.path().extension() == Some(OsStr::new("json"))
-            {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
+        has_credentials_in_dir(&self.repo_credentials_dir)
     }
 
     fn load_repo_credentials(&self) -> anyhow::Result<Vec<KiroCredentials>> {
-        if !self.repo_credentials_dir.exists() {
-            return Ok(vec![]);
-        }
-
-        let mut items = Vec::new();
-        for entry in fs::read_dir(&self.repo_credentials_dir)
-            .with_context(|| format!("读取凭据目录失败: {}", self.repo_credentials_dir.display()))?
-        {
-            let entry = entry?;
-            if !entry.file_type()?.is_file() || entry.path().extension() != Some(OsStr::new("json"))
-            {
-                continue;
-            }
-
-            let path = entry.path();
-            let content = fs::read_to_string(&path)
-                .with_context(|| format!("读取凭据文件失败: {}", path.display()))?;
-            let mut credential: KiroCredentials = serde_json::from_str(&content)
-                .with_context(|| format!("解析凭据文件失败: {}", path.display()))?;
-            credential.canonicalize_auth_method();
-            items.push((
-                path.file_name().map(|s| s.to_string_lossy().to_string()),
-                credential,
-            ));
-        }
-
-        items.sort_by(|(a_name, a), (b_name, b)| a.id.cmp(&b.id).then_with(|| a_name.cmp(b_name)));
-
-        Ok(items
-            .into_iter()
-            .map(|(_, credential)| credential)
-            .collect())
+        load_credentials_from_dir(&self.repo_credentials_dir)
     }
 
     fn materialize_runtime_credentials(&self) -> anyhow::Result<()> {
@@ -340,50 +464,7 @@ impl GitStorage {
         let config = CredentialsConfig::load(path)
             .with_context(|| format!("读取运行时凭据失败: {}", path.display()))?;
         let credentials = config.into_sorted_credentials();
-        self.write_credentials_to_repo(&credentials)
-    }
-
-    fn write_credentials_to_repo(&self, credentials: &[KiroCredentials]) -> anyhow::Result<()> {
-        fs::create_dir_all(&self.repo_credentials_dir).with_context(|| {
-            format!(
-                "创建 git 凭据目录失败: {}",
-                self.repo_credentials_dir.display()
-            )
-        })?;
-
-        let mut expected = Vec::new();
-        for (index, credential) in credentials.iter().enumerate() {
-            let file_name = credential_file_name(credential, index);
-            let path = self.repo_credentials_dir.join(&file_name);
-            let mut data = credential.clone();
-            data.canonicalize_auth_method();
-            let json = serde_json::to_string_pretty(&data)
-                .with_context(|| format!("序列化凭据失败: {}", file_name))?;
-            fs::write(&path, json)
-                .with_context(|| format!("写入 git 凭据失败: {}", path.display()))?;
-            expected.push(file_name);
-        }
-
-        for entry in fs::read_dir(&self.repo_credentials_dir).with_context(|| {
-            format!(
-                "读取 git 凭据目录失败: {}",
-                self.repo_credentials_dir.display()
-            )
-        })? {
-            let entry = entry?;
-            if !entry.file_type()?.is_file() {
-                continue;
-            }
-            let file_name = entry.file_name().to_string_lossy().to_string();
-            if entry.path().extension() == Some(OsStr::new("json"))
-                && !expected.contains(&file_name)
-            {
-                fs::remove_file(entry.path())
-                    .with_context(|| format!("删除旧凭据文件失败: {}", file_name))?;
-            }
-        }
-
-        Ok(())
+        write_credentials_to_dir(&self.repo_credentials_dir, &credentials)
     }
 
     fn commit_and_push(&self, message: &str) -> anyhow::Result<()> {
@@ -469,6 +550,89 @@ fn credential_file_name(credential: &KiroCredentials, index: usize) -> String {
     }
 }
 
+fn has_credentials_in_dir(dir: &Path) -> anyhow::Result<bool> {
+    if !dir.exists() {
+        return Ok(false);
+    }
+
+    for entry in
+        fs::read_dir(dir).with_context(|| format!("读取账号目录失败: {}", dir.display()))?
+    {
+        let entry = entry?;
+        if entry.file_type()?.is_file() && entry.path().extension() == Some(OsStr::new("json")) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn load_credentials_from_dir(dir: &Path) -> anyhow::Result<Vec<KiroCredentials>> {
+    if !dir.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut items = Vec::new();
+    for entry in
+        fs::read_dir(dir).with_context(|| format!("读取账号目录失败: {}", dir.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() || entry.path().extension() != Some(OsStr::new("json")) {
+            continue;
+        }
+
+        let path = entry.path();
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("读取账号文件失败: {}", path.display()))?;
+        let mut credential: KiroCredentials = serde_json::from_str(&content)
+            .with_context(|| format!("解析账号文件失败: {}", path.display()))?;
+        credential.canonicalize_auth_method();
+        items.push((
+            path.file_name().map(|s| s.to_string_lossy().to_string()),
+            credential,
+        ));
+    }
+
+    items.sort_by(|(a_name, a), (b_name, b)| a.id.cmp(&b.id).then_with(|| a_name.cmp(b_name)));
+
+    Ok(items
+        .into_iter()
+        .map(|(_, credential)| credential)
+        .collect())
+}
+
+fn write_credentials_to_dir(dir: &Path, credentials: &[KiroCredentials]) -> anyhow::Result<()> {
+    fs::create_dir_all(dir).with_context(|| format!("创建账号目录失败: {}", dir.display()))?;
+
+    let mut expected = Vec::new();
+    for (index, credential) in credentials.iter().enumerate() {
+        let file_name = credential_file_name(credential, index);
+        let path = dir.join(&file_name);
+        let mut data = credential.clone();
+        data.canonicalize_auth_method();
+        let json = serde_json::to_string_pretty(&data)
+            .with_context(|| format!("序列化账号失败: {}", file_name))?;
+        fs::write(&path, json).with_context(|| format!("写入账号文件失败: {}", path.display()))?;
+        expected.push(file_name);
+    }
+
+    for entry in
+        fs::read_dir(dir).with_context(|| format!("读取账号目录失败: {}", dir.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if entry.path().extension() == Some(OsStr::new("json")) && !expected.contains(&file_name) {
+            fs::remove_file(entry.path())
+                .with_context(|| format!("删除旧账号文件失败: {}", file_name))?;
+        }
+    }
+
+    Ok(())
+}
+
 fn make_absolute(path: &Path) -> anyhow::Result<PathBuf> {
     if path.is_absolute() {
         return Ok(path.to_path_buf());
@@ -483,45 +647,82 @@ fn same_path(left: &Path, right: &Path) -> anyhow::Result<bool> {
     Ok(make_absolute(left)? == make_absolute(right)?)
 }
 
-pub fn initialize_from_env(
+fn default_local_data_root() -> anyhow::Result<PathBuf> {
+    if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
+        if !local_app_data.trim().is_empty() {
+            return Ok(PathBuf::from(local_app_data).join("kiro-rs"));
+        }
+    }
+
+    if let Ok(xdg_data_home) = env::var("XDG_DATA_HOME") {
+        if !xdg_data_home.trim().is_empty() {
+            return Ok(PathBuf::from(xdg_data_home).join("kiro-rs"));
+        }
+    }
+
+    if let Ok(home) = env::var("HOME") {
+        if !home.trim().is_empty() {
+            return Ok(PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .join("kiro-rs"));
+        }
+    }
+
+    bail!("无法确定本地数据目录：LOCALAPPDATA/XDG_DATA_HOME/HOME 均不可用")
+}
+
+pub fn initialize(
     requested_config_path: &Path,
     requested_credentials_path: &Path,
+    allow_local_directory_defaults: bool,
 ) -> anyhow::Result<Option<ResolvedPaths>> {
-    let Some(config) = GitStorageConfig::from_env()? else {
-        return Ok(None);
+    let backend = if let Some(config) = GitStorageConfig::from_env()? {
+        let storage = Arc::new(GitStorage::new(
+            config,
+            requested_config_path,
+            requested_credentials_path,
+        )?);
+        storage.initialize(requested_config_path, requested_credentials_path)?;
+        Some(StorageBackend::Git(storage))
+    } else if allow_local_directory_defaults {
+        let storage = Arc::new(LocalStorage::new(
+            requested_config_path,
+            requested_credentials_path,
+        )?);
+        storage.initialize(requested_config_path, requested_credentials_path)?;
+        Some(StorageBackend::Local(storage))
+    } else {
+        None
     };
 
-    let storage = Arc::new(GitStorage::new(
-        config,
-        requested_config_path,
-        requested_credentials_path,
-    )?);
-    storage.initialize(requested_config_path, requested_credentials_path)?;
+    let Some(backend) = backend else {
+        return Ok(None);
+    };
+    let resolved = backend.resolved_paths();
 
-    let resolved = storage.resolved_paths();
-
-    if let Some(existing) = GIT_STORAGE.get() {
+    if let Some(existing) = STORAGE_BACKEND.get() {
         if existing.resolved_paths().config_path != resolved.config_path
             || existing.resolved_paths().credentials_path != resolved.credentials_path
         {
-            bail!("Git 外部存储已初始化为不同路径，拒绝重复初始化");
+            bail!("存储后端已初始化为不同路径，拒绝重复初始化");
         }
     } else {
-        let _ = GIT_STORAGE.set(storage);
+        let _ = STORAGE_BACKEND.set(backend);
     }
 
     Ok(Some(resolved))
 }
 
 pub fn notify_config_written(path: &Path) -> anyhow::Result<()> {
-    if let Some(storage) = GIT_STORAGE.get() {
+    if let Some(storage) = STORAGE_BACKEND.get() {
         storage.on_config_saved(path)?;
     }
     Ok(())
 }
 
 pub fn notify_credentials_written(path: &Path) -> anyhow::Result<()> {
-    if let Some(storage) = GIT_STORAGE.get() {
+    if let Some(storage) = STORAGE_BACKEND.get() {
         storage.on_credentials_saved(path)?;
     }
     Ok(())

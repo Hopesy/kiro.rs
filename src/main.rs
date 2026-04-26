@@ -24,6 +24,8 @@ use model::config::Config;
 async fn main() {
     // 解析命令行参数
     let args = Args::parse();
+    let config_arg = args.config.clone();
+    let credentials_arg = args.credentials.clone();
 
     // 初始化日志
     tracing_subscriber::fmt()
@@ -44,19 +46,23 @@ async fn main() {
         .unwrap_or_else(|| KiroCredentials::default_credentials_path().to_string());
     let mut force_multiple_format = false;
 
-    // 初始化可选的 git 外部存储（若启用则重定向 config/credentials 路径）
-    if let Some(resolved) =
-        storage::initialize_from_env(Path::new(&config_path), Path::new(&credentials_path))
-            .unwrap_or_else(|e| {
-                tracing::error!("初始化 git 外部存储失败: {}", e);
-                std::process::exit(1);
-            })
-    {
+    // 初始化可选的外部存储：
+    // 1. 设置了 GIT_STORAGE_REPO_URL -> git 数据仓库
+    // 2. 未显式传入 -c / --credentials -> 本地数据目录
+    if let Some(resolved) = storage::initialize(
+        Path::new(&config_path),
+        Path::new(&credentials_path),
+        config_arg.is_none() && credentials_arg.is_none(),
+    )
+    .unwrap_or_else(|e| {
+        tracing::error!("初始化持久化存储失败: {}", e);
+        std::process::exit(1);
+    }) {
         config_path = resolved.config_path.to_string_lossy().to_string();
         credentials_path = resolved.credentials_path.to_string_lossy().to_string();
         force_multiple_format = resolved.force_multiple_credentials;
         tracing::info!(
-            "已启用 git 外部存储: config={}, credentials={}",
+            "已启用目录化持久化: config={}, credentials={}",
             config_path,
             credentials_path
         );
