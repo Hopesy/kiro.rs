@@ -22,6 +22,7 @@ pub struct ResolvedPaths {
 #[derive(Debug, Clone)]
 struct GitStorageConfig {
     repo_url: String,
+    auth_token: Option<String>,
     branch: String,
     local_dir: PathBuf,
     config_path: PathBuf,
@@ -62,6 +63,12 @@ impl GitStorageConfig {
 
         Ok(Some(Self {
             repo_url,
+            auth_token: match env::var("GIT_STORAGE_AUTH_TOKEN") {
+                Ok(value) if !value.trim().is_empty() => Some(value),
+                Ok(_) => bail!("GIT_STORAGE_AUTH_TOKEN 已设置但为空"),
+                Err(env::VarError::NotPresent) => None,
+                Err(e) => return Err(e).context("读取 GIT_STORAGE_AUTH_TOKEN 失败"),
+            },
             branch: env::var("GIT_STORAGE_BRANCH").unwrap_or_else(|_| "render-state".to_string()),
             local_dir,
             config_path,
@@ -178,7 +185,7 @@ impl GitStorage {
                 None,
                 [
                     "clone".to_string(),
-                    self.config.repo_url.clone(),
+                    self.authenticated_repo_url()?,
                     self.repo_root.display().to_string(),
                 ],
             )
@@ -186,8 +193,24 @@ impl GitStorage {
         }
 
         self.ensure_git_identity()?;
+        self.run_git(["remote", "set-url", "origin", &self.authenticated_repo_url()?])
+            .context("更新 origin 远端地址失败")?;
         self.checkout_storage_branch()?;
         Ok(())
+    }
+
+    fn authenticated_repo_url(&self) -> anyhow::Result<String> {
+        let Some(token) = &self.config.auth_token else {
+            return Ok(self.config.repo_url.clone());
+        };
+
+        let mut url = reqwest::Url::parse(&self.config.repo_url)
+            .with_context(|| format!("解析 GIT_STORAGE_REPO_URL 失败: {}", self.config.repo_url))?;
+        url.set_username("x-access-token")
+            .map_err(|_| anyhow::anyhow!("为 git 仓库 URL 设置用户名失败"))?;
+        url.set_password(Some(token))
+            .map_err(|_| anyhow::anyhow!("为 git 仓库 URL 设置密码失败"))?;
+        Ok(url.to_string())
     }
 
     fn ensure_git_identity(&self) -> anyhow::Result<()> {

@@ -386,6 +386,7 @@ RUST_LOG=debug ./target/release/kiro-rs
 | 变量 | 必填 | 默认值 | 说明 |
 |------|------|--------|------|
 | `GIT_STORAGE_REPO_URL` | 是 | - | 用于保存状态的 git 仓库 URL |
+| `GIT_STORAGE_AUTH_TOKEN` | 否 | - | git 仓库写权限 token；推荐与 URL 分离配置 |
 | `GIT_STORAGE_BRANCH` | 否 | `render-state` | 持久化分支，建议与部署分支分开 |
 | `GIT_STORAGE_LOCAL_DIR` | 否 | `.git-storage` | 容器内临时 clone 目录 |
 | `GIT_STORAGE_CONFIG_PATH` | 否 | `state/config.json` | git 仓库内配置文件路径 |
@@ -399,6 +400,13 @@ RUST_LOG=debug ./target/release/kiro-rs
 2. 配置上面的 `GIT_STORAGE_*` 环境变量
 3. 第一次启动时，服务会把本地配置导入 git 仓库
 4. 之后以 git 仓库里的配置 / RT 为准；刷新出来的新 RT 会自动写回远端
+
+推荐把仓库地址和密钥分开配置：
+
+```text
+GIT_STORAGE_REPO_URL=https://github.com/Hopesy/kiro.rs.git
+GIT_STORAGE_AUTH_TOKEN=<github-pat>
+```
 
 #### 凭据目录格式
 
@@ -423,11 +431,13 @@ state/
 - `ADMIN_API_KEY`
 - `KIRO_REFRESH_TOKEN`
 - `GIT_STORAGE_REPO_URL`
+- `GIT_STORAGE_AUTH_TOKEN`
 
-推荐把 `GIT_STORAGE_REPO_URL` 设置为带写权限的仓库地址，例如：
+推荐配置方式：
 
 ```text
-https://<github-username>:<github-pat>@github.com/Hopesy/kiro.rs.git
+GIT_STORAGE_REPO_URL=https://github.com/Hopesy/kiro.rs.git
+GIT_STORAGE_AUTH_TOKEN=<github-pat>
 ```
 
 创建方式：
@@ -435,7 +445,7 @@ https://<github-username>:<github-pat>@github.com/Hopesy/kiro.rs.git
 1. Render Dashboard → `New` → `Blueprint`
 2. 连接当前仓库 `Hopesy/kiro.rs`
 3. Render 会自动读取 `render.yaml`
-4. 首次创建时输入上面 4 个敏感变量
+4. 首次创建时输入上面 5 个敏感变量
 
 `render.yaml` 当前默认使用：
 

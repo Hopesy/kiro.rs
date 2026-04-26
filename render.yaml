@@ -31,6 +31,8 @@ services:
         sync: false
       - key: GIT_STORAGE_REPO_URL
         sync: false
+      - key: GIT_STORAGE_AUTH_TOKEN
+        sync: false
     startCommand: >
       /bin/sh -lc 'mkdir -p /tmp/kiro-bootstrap
       && cat > /tmp/kiro-bootstrap/config.json <<EOF
