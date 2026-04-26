@@ -50,14 +50,14 @@ impl GitStorageConfig {
         let config_path = match env::var("GIT_STORAGE_CONFIG_PATH") {
             Ok(value) if !value.trim().is_empty() => PathBuf::from(value),
             Ok(_) => bail!("GIT_STORAGE_CONFIG_PATH 已设置但为空"),
-            Err(env::VarError::NotPresent) => PathBuf::from("state/config.json"),
+            Err(env::VarError::NotPresent) => PathBuf::from("config/config.json"),
             Err(e) => return Err(e).context("读取 GIT_STORAGE_CONFIG_PATH 失败"),
         };
 
         let credentials_dir = match env::var("GIT_STORAGE_CREDENTIALS_DIR") {
             Ok(value) if !value.trim().is_empty() => PathBuf::from(value),
             Ok(_) => bail!("GIT_STORAGE_CREDENTIALS_DIR 已设置但为空"),
-            Err(env::VarError::NotPresent) => PathBuf::from("state/credentials"),
+            Err(env::VarError::NotPresent) => PathBuf::from("auths"),
             Err(e) => return Err(e).context("读取 GIT_STORAGE_CREDENTIALS_DIR 失败"),
         };
 
@@ -139,6 +139,13 @@ impl GitStorage {
             bootstrap_reason.push("import config");
         }
 
+        if !self.repo_config_path.exists() {
+            bail!(
+                "git 数据仓库中缺少配置文件: {}",
+                self.repo_config_path.display()
+            );
+        }
+
         if !self.has_repo_credentials()? && requested_credentials_path.exists() {
             self.import_credentials_file_to_repo(requested_credentials_path)?;
             bootstrap_reason.push("import credentials");
@@ -193,8 +200,13 @@ impl GitStorage {
         }
 
         self.ensure_git_identity()?;
-        self.run_git(["remote", "set-url", "origin", &self.authenticated_repo_url()?])
-            .context("更新 origin 远端地址失败")?;
+        self.run_git([
+            "remote",
+            "set-url",
+            "origin",
+            &self.authenticated_repo_url()?,
+        ])
+        .context("更新 origin 远端地址失败")?;
         self.checkout_storage_branch()?;
         Ok(())
     }

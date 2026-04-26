@@ -389,54 +389,66 @@ RUST_LOG=debug ./target/release/kiro-rs
 | `GIT_STORAGE_AUTH_TOKEN` | 否 | - | git 仓库写权限 token；推荐与 URL 分离配置 |
 | `GIT_STORAGE_BRANCH` | 否 | `render-state` | 持久化分支，建议与部署分支分开 |
 | `GIT_STORAGE_LOCAL_DIR` | 否 | `.git-storage` | 容器内临时 clone 目录 |
-| `GIT_STORAGE_CONFIG_PATH` | 否 | `state/config.json` | git 仓库内配置文件路径 |
-| `GIT_STORAGE_CREDENTIALS_DIR` | 否 | `state/credentials` | git 仓库内凭据目录；每个凭据一份 JSON |
+| `GIT_STORAGE_CONFIG_PATH` | 否 | `config/config.json` | git 仓库内配置文件路径 |
+| `GIT_STORAGE_CREDENTIALS_DIR` | 否 | `auths` | git 仓库内账号目录；每个账号一个 JSON |
 | `GIT_STORAGE_AUTHOR_NAME` | 否 | `kiro-rs` | 自动提交的 git author name |
 | `GIT_STORAGE_AUTHOR_EMAIL` | 否 | `kiro-rs@localhost` | 自动提交的 git author email |
 
 #### Render Free 推荐做法
 
-1. 启动脚本先在本地生成一个最小 `config.json` 和初始 `credentials.json`
-2. 配置上面的 `GIT_STORAGE_*` 环境变量
-3. 第一次启动时，服务会把本地配置导入 git 仓库
-4. 之后以 git 仓库里的配置 / RT 为准；刷新出来的新 RT 会自动写回远端
+1. 准备一个**单独的数据仓库**（建议 private），并在其中维护：
+   - `config/config.json`
+   - `auths/*.json`
+2. 在 Render 里配置上面的 `GIT_STORAGE_*` 环境变量
+3. 服务启动时会先 clone / pull 数据仓库
+4. 然后把 `auths/*.json` 聚合为运行时 `credentials.json`
+5. 后续所有运行时变更都会反向写回数据仓库，包括：
+   - RT 自动刷新
+   - 用户上传单账号 RT
+   - 用户删除单账号 RT
+   - 配置修改（如负载均衡模式）
 
 推荐把仓库地址和密钥分开配置：
 
 ```text
-GIT_STORAGE_REPO_URL=https://github.com/Hopesy/kiro.rs.git
+GIT_STORAGE_REPO_URL=https://github.com/Hopesy/kiro-rs-state.git
 GIT_STORAGE_AUTH_TOKEN=<github-pat>
 ```
 
-#### 凭据目录格式
+#### 数据仓库目录格式
 
-启用 git 外部存储后，仓库里会出现类似：
+启用 git 外部存储后，数据仓库建议采用：
 
 ```text
-state/
-├── config.json
-└── credentials/
-    ├── credential-000001.json
-    ├── credential-000002.json
-    └── ...
+config/
+└── config.json
+
+auths/
+├── credential-000001.json
+├── credential-000002.json
+└── ...
 ```
 
-其中每个 `credential-*.json` 都是单个凭据对象；运行时用的聚合 `credentials.json` 只是本地临时文件，不要求持久保存。
+其中：
+
+- `config/config.json` 是服务配置源
+- `auths/*.json` 是单账号凭据源
+- 运行时用的聚合 `credentials.json` 只是本地临时文件，不要求持久保存
+- 服务重启时会重新从 `config/` 和 `auths/` 恢复状态
+
+> 这套模式**不改变原项目核心逻辑**：运行时仍然使用 `config.json` 和聚合 `credentials.json`，只是增加了 git 数据仓库作为持久化后端。
 
 ### Render Blueprint（减少手工填写）
 
-仓库根目录已提供 `render.yaml`，可直接用 Render Blueprint 创建服务。这样大部分部署参数会自动带入，首次只需要手填以下敏感值：
+仓库根目录已提供 `render.yaml`，可直接用 Render Blueprint 创建服务。当前 blueprint 不再要求手工注入单个 RT；首次只需要手填以下敏感值：
 
-- `PUBLIC_API_KEY`
-- `ADMIN_API_KEY`
-- `KIRO_REFRESH_TOKEN`
 - `GIT_STORAGE_REPO_URL`
 - `GIT_STORAGE_AUTH_TOKEN`
 
 推荐配置方式：
 
 ```text
-GIT_STORAGE_REPO_URL=https://github.com/Hopesy/kiro.rs.git
+GIT_STORAGE_REPO_URL=https://github.com/Hopesy/kiro-rs-state.git
 GIT_STORAGE_AUTH_TOKEN=<github-pat>
 ```
 
@@ -445,11 +457,12 @@ GIT_STORAGE_AUTH_TOKEN=<github-pat>
 1. Render Dashboard → `New` → `Blueprint`
 2. 连接当前仓库 `Hopesy/kiro.rs`
 3. Render 会自动读取 `render.yaml`
-4. 首次创建时输入上面 5 个敏感变量
+4. 首次创建时输入上面 2 个敏感变量
+5. 确保数据仓库里已经准备好 `config/config.json`；若没有，服务会拒绝启动
 
 `render.yaml` 当前默认使用：
 
-- Existing Image: `ghcr.io/hopesy/kiro-rs:v2026.3.3`
+- Existing Image: `ghcr.io/hopesy/kiro-rs:v2026.3.4`
 - Free plan
 - Git 外部存储分支：`render-state`
 
