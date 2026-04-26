@@ -387,12 +387,6 @@ RUST_LOG=debug ./target/release/kiro-rs
 |------|------|--------|------|
 | `GIT_STORAGE_REPO_URL` | 是 | - | 用于保存状态的 git 仓库 URL |
 | `GIT_STORAGE_AUTH_TOKEN` | 否 | - | git 仓库写权限 token；推荐与 URL 分离配置 |
-| `GIT_STORAGE_BRANCH` | 否 | `render-state` | 持久化分支，建议与部署分支分开 |
-| `GIT_STORAGE_LOCAL_DIR` | 否 | `.git-storage` | 容器内临时 clone 目录 |
-| `GIT_STORAGE_CONFIG_PATH` | 否 | `config/config.json` | git 仓库内配置文件路径 |
-| `GIT_STORAGE_CREDENTIALS_DIR` | 否 | `auths` | git 仓库内账号目录；每个账号一个 JSON |
-| `GIT_STORAGE_AUTHOR_NAME` | 否 | `kiro-rs` | 自动提交的 git author name |
-| `GIT_STORAGE_AUTHOR_EMAIL` | 否 | `kiro-rs@localhost` | 自动提交的 git author email |
 
 #### Render Free 推荐做法
 
@@ -464,7 +458,11 @@ GIT_STORAGE_AUTH_TOKEN=<github-pat>
 
 - Existing Image: `ghcr.io/hopesy/kiro-rs:v2026.3.4`
 - Free plan
-- Git 外部存储分支：`render-state`
+- Git 外部存储默认内部参数：
+  - 分支：`render-state`
+  - 工作目录：`.git-storage`（容器内会用你配置的 cwd 解析）
+  - 配置路径：`config/config.json`
+  - 账号目录：`auths`
 
 ## API 端点
 

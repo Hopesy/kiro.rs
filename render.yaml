@@ -11,16 +11,4 @@ services:
         sync: false
       - key: GIT_STORAGE_AUTH_TOKEN
         sync: false
-      - key: GIT_STORAGE_BRANCH
-        value: render-state
-      - key: GIT_STORAGE_LOCAL_DIR
-        value: /tmp/kiro-state
-      - key: GIT_STORAGE_CONFIG_PATH
-        value: config/config.json
-      - key: GIT_STORAGE_CREDENTIALS_DIR
-        value: auths
-      - key: GIT_STORAGE_AUTHOR_NAME
-        value: kiro-rs
-      - key: GIT_STORAGE_AUTHOR_EMAIL
-        value: kiro-rs@localhost
     startCommand: /app/kiro-rs -c /app/config/config.json --credentials /app/config/credentials.json

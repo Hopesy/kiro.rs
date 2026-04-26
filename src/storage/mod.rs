@@ -27,8 +27,6 @@ struct GitStorageConfig {
     local_dir: PathBuf,
     config_path: PathBuf,
     credentials_dir: PathBuf,
-    author_name: String,
-    author_email: String,
 }
 
 impl GitStorageConfig {
@@ -73,10 +71,6 @@ impl GitStorageConfig {
             local_dir,
             config_path,
             credentials_dir,
-            author_name: env::var("GIT_STORAGE_AUTHOR_NAME")
-                .unwrap_or_else(|_| "kiro-rs".to_string()),
-            author_email: env::var("GIT_STORAGE_AUTHOR_EMAIL")
-                .unwrap_or_else(|_| "kiro-rs@localhost".to_string()),
         }))
     }
 }
@@ -226,9 +220,9 @@ impl GitStorage {
     }
 
     fn ensure_git_identity(&self) -> anyhow::Result<()> {
-        self.run_git(["config", "user.name", &self.config.author_name])
+        self.run_git(["config", "user.name", "kiro-rs"])
             .context("设置 git user.name 失败")?;
-        self.run_git(["config", "user.email", &self.config.author_email])
+        self.run_git(["config", "user.email", "kiro-rs@localhost"])
             .context("设置 git user.email 失败")?;
         Ok(())
     }
