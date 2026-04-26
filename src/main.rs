@@ -69,8 +69,12 @@ async fn main() {
     }
 
     // 加载配置
-    let config = Config::load(&config_path).unwrap_or_else(|e| {
+    let mut config = Config::load(&config_path).unwrap_or_else(|e| {
         tracing::error!("加载配置失败: {}", e);
+        std::process::exit(1);
+    });
+    config.apply_runtime_env_overrides().unwrap_or_else(|e| {
+        tracing::error!("应用运行时环境覆盖失败: {}", e);
         std::process::exit(1);
     });
 

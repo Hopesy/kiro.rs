@@ -1,6 +1,7 @@
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -195,6 +196,25 @@ impl Config {
         "config.json"
     }
 
+    /// 从部署环境变量生成首份配置
+    pub fn bootstrap_from_env() -> Self {
+        let mut config = Self::default();
+
+        if let Some(api_key) = non_empty_env("PUBLIC_API_KEY") {
+            config.api_key = Some(api_key);
+        }
+
+        if let Some(admin_api_key) = non_empty_env("ADMIN_API_KEY") {
+            config.admin_api_key = Some(admin_api_key);
+        }
+
+        if let Some(region) = non_empty_env("KIRO_REGION") {
+            config.region = region;
+        }
+
+        config
+    }
+
     /// 获取有效的 Auth Region（用于 Token 刷新）
     /// 优先使用 auth_region，未配置时回退到 region
     pub fn effective_auth_region(&self) -> &str {
@@ -228,6 +248,28 @@ impl Config {
         self.config_path.as_deref()
     }
 
+    /// 应用运行时环境覆盖（例如 Render 注入的 PORT）
+    pub fn apply_runtime_env_overrides(&mut self) -> anyhow::Result<()> {
+        let runtime_port = non_empty_env("PORT");
+        let runtime_host = non_empty_env("HOST");
+
+        if let Some(port) = runtime_port {
+            self.port = port
+                .parse::<u16>()
+                .with_context(|| format!("环境变量 PORT 不是有效端口: {}", port))?;
+
+            if let Some(host) = runtime_host {
+                self.host = host;
+            } else {
+                self.host = "0.0.0.0".to_string();
+            }
+        } else if let Some(host) = runtime_host {
+            self.host = host;
+        }
+
+        Ok(())
+    }
+
     /// 将当前配置写回原始配置文件
     pub fn save(&self) -> anyhow::Result<()> {
         let path = self
@@ -241,5 +283,12 @@ impl Config {
         crate::storage::notify_config_written(path)
             .with_context(|| format!("同步配置到外部存储失败: {}", path.display()))?;
         Ok(())
+    }
+}
+
+fn non_empty_env(name: &str) -> Option<String> {
+    match env::var(name) {
+        Ok(value) if !value.trim().is_empty() => Some(value),
+        _ => None,
     }
 }

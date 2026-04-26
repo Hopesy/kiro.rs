@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version label for release assets (e.g., v2026.3.5)'
+        description: 'Version label for release assets (e.g., v2026.3.6)'
         required: true
-        default: 'v2026.3.5'
+        default: 'v2026.3.6'
 
 permissions:
   contents: write
@@ -103,9 +103,10 @@ jobs:
           Platform: windows-x64
 
           Quick start:
-          1. Copy config.example.json to config.json and fill in apiKey / region
-          2. Prepare credentials.json based on one of the credentials.example.*.json files
-          3. Run: .\\kiro-rs.exe
+          1. Run: .\\kiro-rs.exe
+          2. Open http://127.0.0.1:8080/admin if adminApiKey is configured
+          3. Persistent data is stored under %LocalAppData%\\kiro-rs\\config and %LocalAppData%\\kiro-rs\\auths
+          4. Advanced users may still pass -c / --credentials to use explicit files
           "@ | Set-Content -Encoding UTF8 (Join-Path $packageDir "START-HERE.txt")
 
           if (Test-Path $zipPath) { Remove-Item -Force $zipPath }

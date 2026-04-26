@@ -381,22 +381,32 @@ RUST_LOG=debug ./target/release/kiro-rs
 
 > 适用场景：Render Free 无持久盘，但你仍希望保存最新 RT 和管理面板里的启动配置。
 
-#### 必要环境变量
+#### 持久化所需环境变量
 
 | 变量 | 必填 | 默认值 | 说明 |
 |------|------|--------|------|
 | `GIT_STORAGE_REPO_URL` | 是 | - | 用于保存状态的 git 仓库 URL |
 | `GIT_STORAGE_AUTH_TOKEN` | 否 | - | git 仓库写权限 token；推荐与 URL 分离配置 |
 
+git 外部存储现在固定使用以下内部约定，不再要求额外部署变量：
+
+- 分支：`main`
+- 本地 worktree：`.git-storage`
+- 配置路径：`config/config.json`
+- 账号目录：`auths`
+
 #### Render Free 推荐做法
 
-1. 准备一个**单独的数据仓库**（建议 private），并在其中维护：
-   - `config/config.json`
-   - `auths/*.json`
-2. 在 Render 里配置上面的 `GIT_STORAGE_*` 环境变量
-3. 服务启动时会先 clone / pull 数据仓库
-4. 然后把 `auths/*.json` 聚合为运行时 `credentials.json`
-5. 后续所有运行时变更都会反向写回数据仓库，包括：
+1. 准备一个**单独的数据仓库**（建议 private）
+2. 在 Render 里配置 `GIT_STORAGE_REPO_URL`、`GIT_STORAGE_AUTH_TOKEN`
+3. 如果数据仓库里还没有 `config/config.json`，再额外配置：
+   - `PUBLIC_API_KEY`
+   - `ADMIN_API_KEY`（可选）
+   - `KIRO_REGION`（可选，默认 `us-east-1`）
+4. 服务启动时会先 clone / pull 数据仓库
+5. 若 `config/config.json` 不存在，会用上面的环境变量自动生成首份配置
+6. 然后把 `auths/*.json` 聚合为运行时 `credentials.json`
+7. 后续所有运行时变更都会反向写回数据仓库，包括：
    - RT 自动刷新
    - 用户上传单账号 RT
    - 用户删除单账号 RT
@@ -465,33 +475,33 @@ Windows 默认数据目录：
 
 ### Render Blueprint（减少手工填写）
 
-仓库根目录已提供 `render.yaml`，可直接用 Render Blueprint 创建服务。当前 blueprint 不再要求手工注入单个 RT；首次只需要手填以下敏感值：
-
-- `GIT_STORAGE_REPO_URL`
-- `GIT_STORAGE_AUTH_TOKEN`
-
-推荐配置方式：
-
-```text
-GIT_STORAGE_REPO_URL=https://github.com/Hopesy/kiro-rs-state.git
-GIT_STORAGE_AUTH_TOKEN=<github-pat>
-```
+仓库根目录已提供 `render.yaml`，可直接用 Render Blueprint 创建服务。当前 blueprint 不再要求手工注入单个 RT。
 
 创建方式：
 
 1. Render Dashboard → `New` → `Blueprint`
 2. 连接当前仓库 `Hopesy/kiro.rs`
 3. Render 会自动读取 `render.yaml`
-4. 首次创建时输入上面 2 个敏感变量
-5. 确保数据仓库里已经准备好 `config/config.json`；若没有，服务会拒绝启动
+4. 首次创建时填写以下变量：
+
+```text
+GIT_STORAGE_REPO_URL=https://github.com/Hopesy/kiro-rs-state.git
+GIT_STORAGE_AUTH_TOKEN=<github-pat>
+PUBLIC_API_KEY=sk-public-xxxxxxxxxxxxxxxx
+ADMIN_API_KEY=sk-admin-xxxxxxxxxxxxxxxx
+KIRO_REGION=us-east-1
+```
+
+5. 如果数据仓库里还没有 `config/config.json`，服务会用 `PUBLIC_API_KEY` / `ADMIN_API_KEY` / `KIRO_REGION` 自动生成首份配置
+6. Render 注入 `PORT` 后，服务会自动绑定 `0.0.0.0:$PORT`，不需要你手填 `PORT`
 
 `render.yaml` 当前默认使用：
 
-- Existing Image: `ghcr.io/hopesy/kiro-rs:v2026.3.4`
+- Existing Image: `ghcr.io/hopesy/kiro-rs:v2026.3.6`
 - Free plan
-- Git 外部存储默认内部参数：
+- Git 外部存储内部参数固定为：
   - 分支：`main`
-  - 工作目录：`.git-storage`（容器内会用你配置的 cwd 解析）
+  - 工作目录：`.git-storage`
   - 配置路径：`config/config.json`
   - 账号目录：`auths`
 

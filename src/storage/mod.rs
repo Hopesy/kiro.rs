@@ -12,6 +12,10 @@ use crate::kiro::model::credentials::{CredentialsConfig, KiroCredentials};
 use crate::model::config::Config;
 
 static STORAGE_BACKEND: OnceLock<StorageBackend> = OnceLock::new();
+const GIT_STORAGE_BRANCH: &str = "main";
+const GIT_STORAGE_LOCAL_DIR: &str = ".git-storage";
+const GIT_STORAGE_CONFIG_PATH: &str = "config/config.json";
+const GIT_STORAGE_CREDENTIALS_DIR: &str = "auths";
 
 #[derive(Debug, Clone)]
 pub struct ResolvedPaths {
@@ -67,27 +71,6 @@ impl GitStorageConfig {
             Err(e) => return Err(e).context("读取 GIT_STORAGE_REPO_URL 失败"),
         };
 
-        let local_dir = match env::var("GIT_STORAGE_LOCAL_DIR") {
-            Ok(value) if !value.trim().is_empty() => PathBuf::from(value),
-            Ok(_) => bail!("GIT_STORAGE_LOCAL_DIR 已设置但为空"),
-            Err(env::VarError::NotPresent) => PathBuf::from(".git-storage"),
-            Err(e) => return Err(e).context("读取 GIT_STORAGE_LOCAL_DIR 失败"),
-        };
-
-        let config_path = match env::var("GIT_STORAGE_CONFIG_PATH") {
-            Ok(value) if !value.trim().is_empty() => PathBuf::from(value),
-            Ok(_) => bail!("GIT_STORAGE_CONFIG_PATH 已设置但为空"),
-            Err(env::VarError::NotPresent) => PathBuf::from("config/config.json"),
-            Err(e) => return Err(e).context("读取 GIT_STORAGE_CONFIG_PATH 失败"),
-        };
-
-        let credentials_dir = match env::var("GIT_STORAGE_CREDENTIALS_DIR") {
-            Ok(value) if !value.trim().is_empty() => PathBuf::from(value),
-            Ok(_) => bail!("GIT_STORAGE_CREDENTIALS_DIR 已设置但为空"),
-            Err(env::VarError::NotPresent) => PathBuf::from("auths"),
-            Err(e) => return Err(e).context("读取 GIT_STORAGE_CREDENTIALS_DIR 失败"),
-        };
-
         Ok(Some(Self {
             repo_url,
             auth_token: match env::var("GIT_STORAGE_AUTH_TOKEN") {
@@ -96,10 +79,10 @@ impl GitStorageConfig {
                 Err(env::VarError::NotPresent) => None,
                 Err(e) => return Err(e).context("读取 GIT_STORAGE_AUTH_TOKEN 失败"),
             },
-            branch: env::var("GIT_STORAGE_BRANCH").unwrap_or_else(|_| "main".to_string()),
-            local_dir,
-            config_path,
-            credentials_dir,
+            branch: GIT_STORAGE_BRANCH.to_string(),
+            local_dir: PathBuf::from(GIT_STORAGE_LOCAL_DIR),
+            config_path: PathBuf::from(GIT_STORAGE_CONFIG_PATH),
+            credentials_dir: PathBuf::from(GIT_STORAGE_CREDENTIALS_DIR),
         }))
     }
 }
@@ -173,11 +156,9 @@ impl LocalStorage {
                     )
                 })?;
             } else {
-                let default_config = Config::default();
-                let content =
-                    serde_json::to_string_pretty(&default_config).context("序列化默认配置失败")?;
-                fs::write(&self.config_path, content)
-                    .with_context(|| format!("写入默认配置失败: {}", self.config_path.display()))?;
+                write_config_file(&self.config_path, &Config::bootstrap_from_env()).with_context(
+                    || format!("写入本地初始配置失败: {}", self.config_path.display()),
+                )?;
             }
         }
 
@@ -303,10 +284,8 @@ impl GitStorage {
         }
 
         if !self.repo_config_path.exists() {
-            bail!(
-                "git 数据仓库中缺少配置文件: {}",
-                self.repo_config_path.display()
-            );
+            self.bootstrap_config_into_repo()?;
+            bootstrap_reason.push("bootstrap config");
         }
 
         if !self.has_repo_credentials()? && requested_credentials_path.exists() {
@@ -432,6 +411,19 @@ impl GitStorage {
         fs::write(&self.repo_config_path, content)
             .with_context(|| format!("写入 git 配置失败: {}", self.repo_config_path.display()))?;
         Ok(())
+    }
+
+    fn bootstrap_config_into_repo(&self) -> anyhow::Result<()> {
+        let config = Config::bootstrap_from_env();
+        if config.api_key.is_none() {
+            bail!(
+                "git 数据仓库中缺少配置文件: {}；首次启动请提供 PUBLIC_API_KEY（可选 ADMIN_API_KEY、KIRO_REGION）或预先提交 config/config.json",
+                self.repo_config_path.display()
+            );
+        }
+
+        write_config_file(&self.repo_config_path, &config)
+            .with_context(|| format!("写入 git 初始配置失败: {}", self.repo_config_path.display()))
     }
 
     fn has_repo_credentials(&self) -> anyhow::Result<bool> {
@@ -630,6 +622,17 @@ fn write_credentials_to_dir(dir: &Path, credentials: &[KiroCredentials]) -> anyh
         }
     }
 
+    Ok(())
+}
+
+fn write_config_file(path: &Path, config: &Config) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("创建配置目录失败: {}", parent.display()))?;
+    }
+
+    let content = serde_json::to_string_pretty(config).context("序列化配置失败")?;
+    fs::write(path, content).with_context(|| format!("写入配置文件失败: {}", path.display()))?;
     Ok(())
 }
 
