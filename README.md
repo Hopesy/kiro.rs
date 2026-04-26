@@ -244,6 +244,32 @@ Render 会自动注入 `PORT`，服务会自动监听：
 ghcr.io/hopesy/kiro-rs:v2026.3.6
 ```
 
+### 十、部署后访问地址说明
+
+部署成功后，访问地址就是 Render 分配给你的 **Public URL / Live URL**，例如：
+
+```text
+https://kiro-rs-xxxx.onrender.com
+```
+
+不要手动拼端口，直接使用 Render 域名即可。
+
+常用访问方式：
+
+```text
+GET  https://kiro-rs-xxxx.onrender.com/v1/models
+POST https://kiro-rs-xxxx.onrender.com/v1/messages
+POST https://kiro-rs-xxxx.onrender.com/v1/messages/count_tokens
+GET  https://kiro-rs-xxxx.onrender.com/admin
+```
+
+说明：
+
+- 外部访问时**不要带 `:端口`**
+- Render 会自动把外部域名转发到容器内的 `$PORT`
+- 根路径 `/` 不一定有页面，这不代表部署失败
+- 建议优先检查 `/v1/models` 和 `/admin`
+
 ---
 
 ## 本地便携版持久化
