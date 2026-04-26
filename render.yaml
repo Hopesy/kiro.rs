@@ -1,0 +1,53 @@
+services:
+  - type: web
+    name: kiro-rs
+    runtime: image
+    image:
+      url: ghcr.io/hopesy/kiro-rs:v2026.3.3
+    plan: free
+    autoDeploy: false
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: KIRO_REGION
+        value: us-east-1
+      - key: GIT_STORAGE_BRANCH
+        value: render-state
+      - key: GIT_STORAGE_LOCAL_DIR
+        value: /tmp/kiro-state
+      - key: GIT_STORAGE_CONFIG_PATH
+        value: state/config.json
+      - key: GIT_STORAGE_CREDENTIALS_DIR
+        value: state/credentials
+      - key: GIT_STORAGE_AUTHOR_NAME
+        value: kiro-rs
+      - key: GIT_STORAGE_AUTHOR_EMAIL
+        value: kiro-rs@localhost
+      - key: PUBLIC_API_KEY
+        sync: false
+      - key: ADMIN_API_KEY
+        sync: false
+      - key: KIRO_REFRESH_TOKEN
+        sync: false
+      - key: GIT_STORAGE_REPO_URL
+        sync: false
+    startCommand: >
+      /bin/sh -lc 'mkdir -p /tmp/kiro-bootstrap
+      && cat > /tmp/kiro-bootstrap/config.json <<EOF
+      {
+        "host": "0.0.0.0",
+        "port": '"${PORT:-10000}"',
+        "apiKey": "'"$PUBLIC_API_KEY"'",
+        "adminApiKey": "'"$ADMIN_API_KEY"'",
+        "region": "'"${KIRO_REGION:-us-east-1}"'",
+        "tlsBackend": "rustls",
+        "defaultEndpoint": "ide"
+      }
+      EOF
+      && cat > /tmp/kiro-bootstrap/credentials.json <<EOF
+      {
+        "refreshToken": "'"$KIRO_REFRESH_TOKEN"'",
+        "authMethod": "social"
+      }
+      EOF
+      && exec /app/kiro-rs -c /tmp/kiro-bootstrap/config.json --credentials /tmp/kiro-bootstrap/credentials.json'

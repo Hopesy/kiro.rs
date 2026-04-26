@@ -415,6 +415,34 @@ state/
 
 其中每个 `credential-*.json` 都是单个凭据对象；运行时用的聚合 `credentials.json` 只是本地临时文件，不要求持久保存。
 
+### Render Blueprint（减少手工填写）
+
+仓库根目录已提供 `render.yaml`，可直接用 Render Blueprint 创建服务。这样大部分部署参数会自动带入，首次只需要手填以下敏感值：
+
+- `PUBLIC_API_KEY`
+- `ADMIN_API_KEY`
+- `KIRO_REFRESH_TOKEN`
+- `GIT_STORAGE_REPO_URL`
+
+推荐把 `GIT_STORAGE_REPO_URL` 设置为带写权限的仓库地址，例如：
+
+```text
+https://<github-username>:<github-pat>@github.com/Hopesy/kiro.rs.git
+```
+
+创建方式：
+
+1. Render Dashboard → `New` → `Blueprint`
+2. 连接当前仓库 `Hopesy/kiro.rs`
+3. Render 会自动读取 `render.yaml`
+4. 首次创建时输入上面 4 个敏感变量
+
+`render.yaml` 当前默认使用：
+
+- Existing Image: `ghcr.io/hopesy/kiro-rs:v2026.3.3`
+- Free plan
+- Git 外部存储分支：`render-state`
+
 ## API 端点
 
 ### 标准端点 (/v1)
