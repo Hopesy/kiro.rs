@@ -3,7 +3,7 @@ services:
     name: kiro-rs
     runtime: image
     image:
-      url: ghcr.io/hopesy/kiro-rs:v2026.3.6
+      url: ghcr.io/hopesy/kiro-rs:latest
     plan: free
     autoDeploy: false
     envVars:

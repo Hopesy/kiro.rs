@@ -211,8 +211,11 @@ GET  https://kiro-rs-xxxx.onrender.com/admin
 ### 八、当前默认镜像
 
 ```text
-ghcr.io/hopesy/kiro-rs:v2026.3.6
+ghcr.io/hopesy/kiro-rs:latest
 ```
+
+`master` 分支推送会自动构建并推送 `latest`、`beta` 和 `beta-<short-sha>` 镜像。
+如果配置了 GitHub Actions secret `RENDER_DEPLOY_HOOK_URL`，镜像推送成功后会自动触发 Render 重新部署。
 
 ---
 
