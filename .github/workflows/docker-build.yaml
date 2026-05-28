@@ -56,27 +56,30 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION="${{ github.event.inputs.version }}"
-            IS_BETA="false"
+            INCLUDE_VERSION_TAG="true"
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${{ github.ref_name }}"
-            IS_BETA="false"
+            INCLUDE_VERSION_TAG="true"
           else
-            SHORT_SHA="$(echo "${{ github.sha }}" | cut -c1-6)"
-            VERSION="beta-${SHORT_SHA}"
-            IS_BETA="true"
+            VERSION=""
+            INCLUDE_VERSION_TAG="false"
           fi
 
           OWNER_LOWER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
           IMAGE="ghcr.io/${OWNER_LOWER}/kiro-rs"
-          ALIAS_TAG="latest"
-          if [ "$IS_BETA" = "true" ]; then
-            ALIAS_TAG="beta"
-          fi
+          {
+            echo "tags<<EOF"
+            if [ "$INCLUDE_VERSION_TAG" = "true" ]; then
+              echo "$IMAGE:$VERSION"
+            fi
+            echo "$IMAGE:latest"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "is_beta=$IS_BETA" >> "$GITHUB_OUTPUT"
+          if [ -n "$VERSION" ]; then
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          fi
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
-          echo "alias_tag=$ALIAS_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -97,13 +100,44 @@ jobs:
           provenance: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          tags: |
-            ${{ steps.version.outputs.image }}:${{ steps.version.outputs.version }}
-            ${{ steps.version.outputs.image }}:${{ steps.version.outputs.alias_tag }}
-            ${{ steps.version.outputs.image }}:latest
+          tags: ${{ steps.version.outputs.tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=Kiro.rs Docker Image
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Delete beta package versions
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE: kiro-rs
+        shell: bash
+        run: |
+          gh api "/users/${OWNER}/packages/container/${PACKAGE}/versions?per_page=100" --jq '.[] | @base64' |
+          while IFS= read -r encoded_version; do
+            version="$(printf '%s' "$encoded_version" | base64 -d)"
+            version_id="$(jq -r '.id' <<< "$version")"
+            tags="$(jq -r '.metadata.container.tags[]?' <<< "$version")"
+
+            if [ -z "$tags" ]; then
+              continue
+            fi
+
+            has_beta_tag="false"
+            has_protected_tag="false"
+            while IFS= read -r tag; do
+              case "$tag" in
+                beta|beta-*) has_beta_tag="true" ;;
+                latest|v*) has_protected_tag="true" ;;
+              esac
+            done <<< "$tags"
+
+            if [ "$has_beta_tag" = "true" ] && [ "$has_protected_tag" = "false" ]; then
+              gh api --method DELETE "/users/${OWNER}/packages/container/${PACKAGE}/versions/${version_id}"
+              echo "Deleted beta package version ${version_id}"
+            fi
+          done
 
       - name: Trigger Render deploy
         if: env.RENDER_DEPLOY_HOOK_URL != ''
